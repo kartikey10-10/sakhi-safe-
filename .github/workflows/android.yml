@@ -1,0 +1,102 @@
+name: Android APK
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: Install JS dependencies
+        run: npm install --no-audit --no-fund
+      - name: TypeScript validation
+        run: npm run typecheck
+      - name: Unit tests
+        run: npm test -- --ci
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: android-actions/setup-android@v3
+      - name: Install Android SDK packages
+        run: sdkmanager "platforms;android-36" "build-tools;36.0.0" "ndk;27.1.12297006"
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.13'
+      - name: Generate Gradle wrapper (wrapper was absent from source)
+        working-directory: android
+        run: gradle wrapper --gradle-version 8.13 --distribution-type bin
+      - name: Configure release signing when secrets exist
+        id: signing
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          SIGNING_KEY_BASE64: ${{ secrets.ANDROID_SIGNING_KEY_BASE64 }}
+          SIGNING_STORE_PASSWORD: ${{ secrets.ANDROID_SIGNING_STORE_PASSWORD }}
+          SIGNING_KEY_ALIAS: ${{ secrets.ANDROID_SIGNING_KEY_ALIAS }}
+          SIGNING_KEY_PASSWORD: ${{ secrets.ANDROID_SIGNING_KEY_PASSWORD }}
+        run: |
+          if [ -n "$SIGNING_KEY_BASE64" ] && [ -n "$SIGNING_STORE_PASSWORD" ] && [ -n "$SIGNING_KEY_ALIAS" ] && [ -n "$SIGNING_KEY_PASSWORD" ]; then
+            echo "$SIGNING_KEY_BASE64" | base64 --decode > "$GITHUB_WORKSPACE/android/app/release.keystore"
+            echo "signed=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "signed=false" >> "$GITHUB_OUTPUT"
+            echo "Signing secrets missing: building a debug-key-signed development APK; release will be marked prerelease."
+          fi
+      - name: Build Android APK
+        working-directory: android
+        env:
+          SAKHI_RELEASE_STORE_FILE: ${{ steps.signing.outputs.signed == 'true' && format('{0}/android/app/release.keystore', github.workspace) || '' }}
+          SAKHI_RELEASE_STORE_PASSWORD: ${{ secrets.ANDROID_SIGNING_STORE_PASSWORD }}
+          SAKHI_RELEASE_KEY_ALIAS: ${{ secrets.ANDROID_SIGNING_KEY_ALIAS }}
+          SAKHI_RELEASE_KEY_PASSWORD: ${{ secrets.ANDROID_SIGNING_KEY_PASSWORD }}
+        run: |
+          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then ./gradlew --no-daemon :app:assembleRelease; cp app/build/outputs/apk/release/app-release.apk "$GITHUB_WORKSPACE/SakhiSafe.apk"; else ./gradlew --no-daemon :app:assembleDebug; cp app/build/outputs/apk/debug/app-debug.apk "$GITHUB_WORKSPACE/SakhiSafe.apk"; fi
+      - name: Verify APK
+        run: test -s SakhiSafe.apk && test "$(stat -c%s SakhiSafe.apk)" -gt 1000000 && ls -lh SakhiSafe.apk
+      - uses: actions/upload-artifact@v4
+        with:
+          name: SakhiSafe-Android-${{ github.ref_name }}
+          path: SakhiSafe.apk
+          if-no-files-found: error
+          retention-days: 30
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: SakhiSafe-Android-${{ github.ref_name }}
+          path: release-assets
+      - name: Checksum
+        working-directory: release-assets
+        run: sha256sum SakhiSafe.apk > SakhiSafe.apk.sha256
+      - name: Determine prerelease status
+        id: release_type
+        env:
+          S1: ${{ secrets.ANDROID_SIGNING_KEY_BASE64 }}
+          S2: ${{ secrets.ANDROID_SIGNING_STORE_PASSWORD }}
+          S3: ${{ secrets.ANDROID_SIGNING_KEY_ALIAS }}
+          S4: ${{ secrets.ANDROID_SIGNING_KEY_PASSWORD }}
+        run: |
+          if [[ -n "$S1" && -n "$S2" && -n "$S3" && -n "$S4" ]]; then echo "prerelease=false" >> "$GITHUB_OUTPUT"; else echo "prerelease=true" >> "$GITHUB_OUTPUT"; fi
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: release-assets/SakhiSafe.apk*
+          generate_release_notes: true
+          prerelease: ${{ steps.release_type.outputs.prerelease == 'true' }}

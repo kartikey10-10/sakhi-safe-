@@ -1,0 +1,10 @@
+apply plugin: 'com.android.application'
+apply plugin: 'org.jetbrains.kotlin.android'
+apply plugin: 'com.facebook.react'
+react { autolinkLibrariesWithApp() }
+android { namespace 'com.sakhisafe'; compileSdk rootProject.ext.compileSdkVersion
+  defaultConfig { applicationId 'com.sakhisafe'; minSdkVersion rootProject.ext.minSdkVersion; targetSdkVersion rootProject.ext.targetSdkVersion; versionCode 1; versionName '1.0' }
+  signingConfigs { debug { }; release { if (System.getenv('SAKHI_RELEASE_STORE_FILE')) { storeFile file(System.getenv('SAKHI_RELEASE_STORE_FILE')); storePassword System.getenv('SAKHI_RELEASE_STORE_PASSWORD'); keyAlias System.getenv('SAKHI_RELEASE_KEY_ALIAS'); keyPassword System.getenv('SAKHI_RELEASE_KEY_PASSWORD') } else { initWith signingConfigs.debug } } }
+  buildTypes { debug { signingConfig signingConfigs.debug }; release { minifyEnabled false; signingConfig signingConfigs.release } }
+}
+dependencies { implementation('com.facebook.react:react-android'); if (hermesEnabled.toBoolean()) { implementation('com.facebook.react:hermes-android') } }

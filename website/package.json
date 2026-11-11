@@ -1,0 +1,1 @@
+{"name":"sakhi-safe-download","version":"1.0.0","private":true,"type":"module","scripts":{"test":"node verify.js","build":"vite build"},"dependencies":{"qrcode":"1.5.4"},"devDependencies":{"vite":"6.4.6"}}
